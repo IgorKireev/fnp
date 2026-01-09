@@ -1,106 +1,108 @@
-import json
+import asyncio
+import random
 import time
-
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
+from playwright.async_api import async_playwright
+from playwright_stealth import Stealth
 
 VIN = "LMGAE3G86S1000692"
+MAX_ATTEMPTS = 5
+GLOBAL_TIMEOUT = 60  # секунд
+
+async def human_behavior(page):
+    # движения мыши
+    for _ in range(random.randint(3, 6)):
+        x = random.randint(100, 800)
+        y = random.randint(100, 600)
+        await page.mouse.move(x, y, steps=random.randint(5, 15))
+        await asyncio.sleep(random.uniform(0.2, 0.6))
+
+    # скролл
+    await page.mouse.wheel(0, random.randint(200, 600))
+    await asyncio.sleep(random.uniform(0.5, 1.2))
 
 
-def main():
-    options = Options()
+async def main():
+    start_time = time.time()
+    attempt = 1
 
-    # маскировка под обычный Chrome
-    options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_argument(
-        "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/120.0.0.0 Safari/537.36"
-    )
-
-    # network/performance logs
-    options.set_capability(
-        "goog:loggingPrefs",
-        {"performance": "ALL"}
-    )
-
-    driver = webdriver.Chrome(
-        service=Service(),  # chromedriver должен быть в PATH
-        options=options
-    )
-
-    wait = WebDriverWait(driver, 30)
-
-    print("🌐 Открываем сайт…")
-    driver.get("https://www.reestr-zalogov.ru/search/index")
-
-    # даём SPA полностью инициализироваться
-    time.sleep(4)
-
-    # === ВКЛАДКА "По информации о предмете залога" ===
-    print("🖱️ Кликаем вкладку поиска…")
-
-    tab = wait.until(
-        EC.presence_of_element_located(
-            (By.XPATH, "//*[contains(text(),'По информации о предмете залога')]")
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(
+            headless=False,
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--enable-webgl",
+                "--use-gl=desktop",
+                "--disable-dev-shm-usage",
+            ],
         )
-    )
 
-    # прокрутка + JS-клик (ключевой момент!)
-    driver.execute_script(
-        "arguments[0].scrollIntoView({block: 'center'});", tab
-    )
-    time.sleep(0.5)
-    driver.execute_script("arguments[0].click();", tab)
+        context = await browser.new_context(
+            locale="ru-RU",
+            viewport={"width": 1280, "height": 800},
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
+        )
 
-    # === VIN ===
-    print("⌨️ Ввод VIN…")
+        page = await context.new_page()
+        stealth = Stealth()
+        await stealth.apply_stealth_async(page)
 
-    vin_input = wait.until(
-        EC.presence_of_element_located((By.ID, "vehicleProperty.vin"))
-    )
-    vin_input.clear()
-    vin_input.send_keys(VIN)
+        captcha_failed = False
 
-    # === ПОИСК ===
-    print("🔍 Нажимаем Поиск…")
+        async def handle_response(response):
+            nonlocal captcha_failed
 
-    find_btn = wait.until(
-        EC.presence_of_element_located((By.ID, "find-btn"))
-    )
+            if "/api/search/notary" in response.url:
+                data = await response.json()
+                print(f"\n[ATTEMPT {attempt}] NOTARY:", data)
 
-    driver.execute_script(
-        "arguments[0].scrollIntoView({block: 'center'});", find_btn
-    )
-    time.sleep(0.5)
-    driver.execute_script("arguments[0].click();", find_btn)
+                if data.get("message") == "Не пройдена проверка CAPTCHA":
+                    captcha_failed = True
+            if "/api/search/fedresurs" in response.url:
+                data = await response.json()
+                print(f"\n[ATTEMPT {attempt}] FEDRESURS:", data)
 
-    print("\n📡 Ждём сетевые ответы (10 сек)…\n")
-    time.sleep(10)
+        page.on("response", handle_response)
 
-    # === NETWORK LOGS ===
-    for entry in driver.get_log("performance"):
-        try:
-            message = json.loads(entry["message"])["message"]
-            if message["method"] == "Network.responseReceived":
-                url = message["params"]["response"]["url"]
-                if "/api/search/notary" in url or "/api/search/fedresurs" in url:
-                    print("API RESPONSE URL:", url)
-        except Exception:
-            pass
+        await page.goto("https://www.reestr-zalogov.ru/search/index")
+        await page.wait_for_load_state("networkidle")
+        await asyncio.sleep(2)
 
-    print("\n🧠 Браузер оставлен открытым")
-    print("👉 F12 → Network → Fetch/XHR")
-    print("👉 Сравни успешный и неуспешный запросы")
-    print("👉 Посмотри headers / cookies / timing")
+        while attempt <= MAX_ATTEMPTS:
+            if time.time() - start_time > GLOBAL_TIMEOUT:
+                raise TimeoutError("Global timeout reached")
 
-    input("\nНажми Enter, чтобы закрыть браузер…")
-    driver.quit()
+            captcha_failed = False
+            print(f"\n▶️ Попытка {attempt}")
 
+            await human_behavior(page)
 
-if __name__ == "__main__":
-    main()
+            await page.get_by_text("По информации о предмете залога").click()
+            await asyncio.sleep(random.uniform(0.8, 1.5))
+
+            vin_input = page.locator("#vehicleProperty\\.vin")
+            await vin_input.fill("")
+            await asyncio.sleep(0.3)
+            await vin_input.type(VIN, delay=random.randint(80, 140))
+
+            await asyncio.sleep(random.uniform(0.8, 1.5))
+            await page.locator("#find-btn").click()
+
+            await asyncio.sleep(5)
+
+            if not captcha_failed:
+                print("✅ CAPTCHA пройдена")
+                break
+
+            print("↩ CAPTCHA не пройдена — повтор")
+            await page.locator("#back-btn").click()
+            await asyncio.sleep(random.uniform(1.5, 2.5))
+
+            attempt += 1
+
+        await browser.close()
+
+asyncio.run(main())

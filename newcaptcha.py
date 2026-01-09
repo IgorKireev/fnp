@@ -1,5 +1,7 @@
 import asyncio
 from playwright.async_api import async_playwright
+from playwright_stealth import Stealth
+
 
 VIN = "LMGAE3G86S1000692"
 
@@ -21,7 +23,7 @@ async def main():
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
                 "Chrome/120.0.0.0 Safari/537.36"
-            )
+            ),
         )
 
         page = await context.new_page()
