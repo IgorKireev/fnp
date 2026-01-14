@@ -30,7 +30,7 @@ async def human_behavior(page):
 async def main():
     async with async_playwright() as p:
         browser = await p.chromium.launch(
-            channel="chrome",          # 🔴 КРИТИЧЕСКИ ВАЖНО
+            channel="chrome",
             headless=False,
             args=[
                 "--disable-blink-features=AutomationControlled",

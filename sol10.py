@@ -5,6 +5,8 @@ from playwright.async_api import async_playwright
 VIN = "LMGAE3G86S1000692"
 START_URL = "https://www.reestr-zalogov.ru/search/index"
 
+# 'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36'
+
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -14,6 +16,7 @@ USER_AGENT = (
 async def main():
     async with async_playwright() as p:
         browser = await p.chromium.launch(
+            channel="chrome",
             headless=False,
             args=[
                 "--disable-blink-features=AutomationControlled",
